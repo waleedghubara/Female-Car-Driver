@@ -1,3 +1,4 @@
+
 workflows:
   ios-testflight:
     name: Female Car Driver iOS TestFlight
@@ -43,10 +44,41 @@ workflows:
       - name: Verify iOS project and bundle identifier
         script: |
           set -e
+
           test -f ios/Runner.xcodeproj/project.pbxproj
           test -f ios/Podfile
-          grep -q "PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;" \
-            ios/Runner.xcodeproj/project.pbxproj
+
+          echo "Checking iOS Bundle Identifiers..."
+
+          python3 - "$BUNDLE_ID" ios/Runner.xcodeproj/project.pbxproj <<'PY'
+          import re
+          import sys
+
+          expected = sys.argv[1]
+          path = sys.argv[2]
+
+          with open(path, encoding="utf-8") as f:
+              content = f.read()
+
+          values = re.findall(
+              r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;]+);',
+              content
+          )
+
+          values = [v.strip().strip('"') for v in values]
+
+          print("Expected Bundle ID:", expected)
+          print("Found Bundle IDs:")
+
+          for value in sorted(set(values)):
+              print(" -", value)
+
+          if expected not in values:
+              print("ERROR: Bundle ID mismatch!")
+              sys.exit(1)
+
+          print("Bundle ID verification successful!")
+          PY
 
       - name: Install CocoaPods dependencies
         script: |
@@ -57,10 +89,15 @@ workflows:
       - name: Configure Xcode signing
         script: |
           set -e
+
           xcode-project use-profiles
+
           test -s "$HOME/export_options.plist"
 
+          echo "Export options verified."
+
           set -o pipefail
+
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -73,13 +110,15 @@ workflows:
         script: |
           set -e
 
+          echo "Looking up Female Car Driver in App Store Connect..."
+
           APP_JSON=$(app-store-connect apps list --json \
             --bundle-id-identifier "$BUNDLE_ID" \
             --strict-match-identifier)
 
           APP_STORE_CONNECT_APP_ID=$(
             printf '%s' "$APP_JSON" |
-              python3 -c '
+            python3 -c '
           import json
           import os
           import sys
@@ -91,44 +130,90 @@ workflows:
           def collect_apps(value):
               if isinstance(value, dict):
                   attributes = value.get("attributes")
+
                   if (
                       isinstance(attributes, dict)
                       and attributes.get("bundleId") == bundle_id
                       and str(value.get("id", "")).isdigit()
                   ):
                       matches.add(str(value["id"]))
+
                   for child in value.values():
                       collect_apps(child)
+
               elif isinstance(value, list):
                   for child in value:
                       collect_apps(child)
 
           collect_apps(payload)
+
           if len(matches) != 1:
               raise SystemExit(
                   f"ERROR: Expected one App Store Connect app for {bundle_id}, "
                   f"found {len(matches)}. Check the app record and API access."
               )
+
           print(matches.pop())
           '
           )
 
-          echo "App Store Connect app ID: $APP_STORE_CONNECT_APP_ID"
-          LATEST_BUILD=$(app-store-connect get-latest-app-store-build-number \
-            "$APP_STORE_CONNECT_APP_ID")
+          echo "App Store Connect App ID: $APP_STORE_CONNECT_APP_ID"
+
+          echo "Checking latest TestFlight build..."
+
+          LATEST_BUILD_RAW=$(
+            app-store-connect get-latest-app-store-build-number \
+              "$APP_STORE_CONNECT_APP_ID" 2>&1 || true
+          )
+
+          echo "$LATEST_BUILD_RAW"
+
+          if echo "$LATEST_BUILD_RAW" | grep -qi "Did not find latest build"; then
+            LATEST_BUILD=0
+            echo "No previous build found. Starting from build 1."
+          else
+            LATEST_BUILD=$(
+              printf '%s\n' "$LATEST_BUILD_RAW" |
+              awk '/^[[:space:]]*\*[0-9]+[[:space:]]*\*$/ {
+                gsub(/[[:space:]]/, "")
+                value=$0
+              }
+              END {
+                if (value != "") print value
+              }'
+            )
+
+            if [ -z "$LATEST_BUILD" ]; then
+              echo "ERROR: Could not determine latest build number."
+              exit 1
+            fi
+          fi
 
           if ! [[ "$LATEST_BUILD" =~ ^[0-9]+$ ]]; then
-            echo "ERROR: App Store Connect returned an invalid latest build number: $LATEST_BUILD"
+            echo "ERROR: Invalid latest build number: $LATEST_BUILD"
             exit 1
           fi
 
           NEW_BUILD=$((LATEST_BUILD + 1))
-          echo "Building $BUNDLE_ID with build number $NEW_BUILD"
+
+          echo "======================================"
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "App Store Connect ID: $APP_STORE_CONNECT_APP_ID"
+          echo "Previous build: $LATEST_BUILD"
+          echo "New build: $NEW_BUILD"
+          echo "======================================"
+
           echo "NEW_BUILD=$NEW_BUILD" >> "$CM_ENV"
 
       - name: Build signed iOS IPA
         script: |
           set -e
+
+          if [ -z "$NEW_BUILD" ]; then
+            echo "ERROR: NEW_BUILD is empty."
+            exit 1
+          fi
+
           flutter build ipa \
             --release \
             --build-number="$NEW_BUILD" \
@@ -138,13 +223,19 @@ workflows:
       - name: Verify IPA artifact
         script: |
           set -e
+
           IPA_DIR="build/ios/ipa"
+
           test -d "$IPA_DIR"
+
           IPA_FILE=$(find "$IPA_DIR" -maxdepth 1 -name "*.ipa" -print -quit)
+
           if [ -z "$IPA_FILE" ]; then
-            echo "ERROR: No IPA was generated in $IPA_DIR"
+            echo "ERROR: No IPA was generated."
             exit 1
           fi
+
+          echo "IPA generated successfully:"
           ls -lh "$IPA_FILE"
 
     artifacts:
