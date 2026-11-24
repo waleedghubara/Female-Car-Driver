@@ -85,6 +85,92 @@ workflows:
           set -e
           cd ios
           pod install
+          cd ..
+
+          echo "Checking Firebase Crashlytics installation..."
+
+          if [ -f "ios/Pods/FirebaseCrashlytics/upload-symbols" ]; then
+            echo "Crashlytics upload-symbols found in CocoaPods."
+          else
+            echo "Crashlytics upload-symbols not found in CocoaPods."
+          fi
+
+      - name: Fix Crashlytics Upload Symbols Script
+        script: |
+          set -e
+
+          PROJECT="ios/Runner.xcodeproj/project.pbxproj"
+
+          echo "Searching for Crashlytics upload-symbols..."
+
+          CRASHLYTICS_SCRIPT=""
+
+          if [ -f "ios/Pods/FirebaseCrashlytics/upload-symbols" ]; then
+            CRASHLYTICS_SCRIPT="${PODS_ROOT}/FirebaseCrashlytics/upload-symbols"
+          fi
+
+          if [ -z "$CRASHLYTICS_SCRIPT" ]; then
+            SPM_SCRIPT=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+              -path "*/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/upload-symbols" \
+              -type f -print -quit 2>/dev/null || true)
+
+            if [ -n "$SPM_SCRIPT" ]; then
+              CRASHLYTICS_SCRIPT="$SPM_SCRIPT"
+              echo "Found Crashlytics through Swift Package Manager."
+            fi
+          fi
+
+          if [ -n "$CRASHLYTICS_SCRIPT" ]; then
+            echo "Crashlytics upload script is available."
+          else
+            echo "WARNING: Crashlytics upload-symbols was not found."
+            echo "Disabling only the Xcode symbol upload build phase."
+
+            python3 - "$PROJECT" <<'PY'
+          import re
+          import sys
+
+          path = sys.argv[1]
+
+          with open(path, "r", encoding="utf-8") as f:
+              content = f.read()
+
+          pattern = re.compile(
+              r'(?P<indent>[ \t]*)shellScript = "(?:\\.|[^"\\])*";',
+              re.DOTALL
+          )
+
+          def replace_script(match):
+              script = match.group(0)
+
+              if "upload-symbols" not in script:
+                  return script
+
+              print("Found Crashlytics upload-symbols build phase.")
+
+              indent = match.group("indent")
+
+              replacement = (
+                  indent
+                  + 'shellScript = "echo \\"Crashlytics symbol upload skipped: upload-symbols unavailable.\\";";'
+              )
+
+              return replacement
+
+          updated = pattern.sub(replace_script, content)
+
+          if updated == content:
+              print("No matching Crashlytics upload script found.")
+          else:
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(updated)
+
+              print("Crashlytics upload phase updated.")
+
+          PY
+          fi
+
+          echo "Crashlytics build phase check completed."
 
       - name: Configure Xcode signing
         script: |
@@ -111,6 +197,8 @@ workflows:
           set -e
 
           echo "Looking up Female Car Driver in App Store Connect..."
+
+          export BUNDLE_ID
 
           APP_JSON=$(app-store-connect apps list --json \
             --bundle-id-identifier "$BUNDLE_ID" \
