@@ -20,11 +20,11 @@ workflows:
       groups:
         - ios-signing
       vars:
-        BUNDLE_ID: com.femalecardriverapp.eon
+        BUNDLE_ID: com.femalecarriderapp.eon
         APP_ENV: production
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.femalecardriverapp.eon
+        bundle_identifier: com.femalecarriderapp.eon
       flutter: stable
       xcode: latest
       cocoapods: default
