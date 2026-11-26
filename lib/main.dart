@@ -43,7 +43,12 @@ Future<void> main() async {
     initialize: () => Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
     fallbackApp: () => Firebase.app(),
   );
-  Map<String, Map<String, String>> languages = await di.init();
+  Map<String, Map<String, String>> languages = {};
+  try {
+    languages = await di.init();
+  } catch (e) {
+    debugPrint('di.init failed: $e');
+  }
 
   RemoteMessage? remoteMessage;
   if (firebaseReady) {

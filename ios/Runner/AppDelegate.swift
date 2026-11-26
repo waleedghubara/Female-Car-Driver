@@ -3,21 +3,15 @@ import Flutter
 import flutter_downloader
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    GeneratedPluginRegistrant.register(with: self)
+    FlutterDownloaderPlugin.setPluginRegistrantCallback(registerPlugins)
     UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  // UIScene lifecycle: plugins must be registered once the implicit Flutter
-  // engine exists. Registering in didFinishLaunching (the old way) leaves the
-  // scene without a FlutterViewController => black screen on launch.
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    FlutterDownloaderPlugin.setPluginRegistrantCallback(registerPlugins)
   }
 }
 
