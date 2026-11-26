@@ -258,17 +258,21 @@ workflows:
 
           if echo "$LATEST_BUILD_RAW" | grep -qi "Did not find latest build"; then
             LATEST_BUILD=0
-            echo "No previous build found. Starting from build 1."
+            echo "No previous build found."
           else
             LATEST_BUILD=$(
               printf '%s\n' "$LATEST_BUILD_RAW" |
-              awk '/^[[:space:]]*\*[0-9]+[[:space:]]*\*$/ {
-                gsub(/[[:space:]]/, "")
-                value=$0
-              }
-              END {
-                if (value != "") print value
-              }'
+              python3 -c '
+          import sys, re
+          raw = sys.stdin.read().strip()
+          lines = [line.strip() for line in raw.splitlines() if line.strip().isdigit()]
+          if lines:
+              print(lines[-1])
+          else:
+              m = re.search(r"build\s*(?:number)?\s*[:#]?\s*(\d+)", raw, re.IGNORECASE)
+              if m:
+                  print(m.group(1))
+          '
             )
 
             if [ -z "$LATEST_BUILD" ]; then
@@ -282,7 +286,17 @@ workflows:
             exit 1
           fi
 
-          NEW_BUILD=$((LATEST_BUILD + 1))
+          PUBSPEC_BUILD=$(grep '^version:' pubspec.yaml | sed -E 's/.*\+([0-9]+).*/\1/')
+          if ! [[ "$PUBSPEC_BUILD" =~ ^[0-9]+$ ]]; then
+            PUBSPEC_BUILD=1
+          fi
+
+          NEXT_BUILD=$((LATEST_BUILD + 1))
+          if [ "$NEXT_BUILD" -gt "$PUBSPEC_BUILD" ]; then
+            NEW_BUILD=$NEXT_BUILD
+          else
+            NEW_BUILD=$PUBSPEC_BUILD
+          fi
 
           echo "======================================"
           echo "Bundle ID: $BUNDLE_ID"
